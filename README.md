@@ -1,430 +1,229 @@
 import tkinter as tk
 from tkinter import ttk
+from PIL import Image, ImageDraw, ImageTk
 
 
-class DynamicRowWidget:
-    def __init__(self, root, initial_data=None, rows_per_page=10):
-        self.root = root
-        self.root.title("Dynamic Row Widget")
-        self.root.geometry("700x500")
+class DualTreeViewWidget:
+    def __init__(self, parent, columns_names, attributs_names_list, model_objects):
+        self.parent = parent
+        self.columns_names = columns_names
+        self.attributs_names_list = attributs_names_list
+        self.model_objects = model_objects
 
-        # Data management
-        self.all_data = []  # Store all data
-        self.displayed_rows = []  # Currently displayed row widgets
-        self.row_counter = 0
+        self.assignments = {}
+        self.item_colors = {}
+        self.next_block_number = 1
+        self.next_address = 1
 
-        # Pagination settings
-        self.rows_per_page = rows_per_page
-        self.current_page = 1
-        self.total_pages = 1
+        self.selected_a_item = None
+        self.selected_b_item = None
 
-        # Create main frame
-        self.main_frame = ttk.Frame(root)
-        self.main_frame.pack(fill=tk.BOTH, expand=True)
+        self.setup_widget()
+        self.populate_treeview_a()
 
-        # Create toolbar
-        self.create_toolbar()
+    def setup_widget(self):
+        self.main_frame = ttk.Frame(self.parent)
+        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Create scrollable frame for rows
-        self.create_scrollable_frame()
+        self.left_frame = ttk.LabelFrame(self.main_frame, text="Objects")
+        self.middle_frame = ttk.Frame(self.main_frame)
+        self.right_frame = ttk.LabelFrame(self.main_frame, text="Blocks")
 
-        # Create pagination controls
-        self.create_pagination_controls()
+        self.left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        self.middle_frame.grid(row=0, column=1, sticky="ns", padx=10)
+        self.right_frame.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
 
-        # Load initial data if provided
-        if initial_data:
-            self.load_data(initial_data)
+        self.main_frame.columnconfigure(0, weight=2)
+        self.main_frame.columnconfigure(2, weight=1)
+        self.main_frame.rowconfigure(0, weight=1)
+
+        self.setup_treeview_a()
+        self.setup_arrows()
+        self.setup_treeview_b()
+
+    def setup_treeview_a(self):
+        self.treeview_a = ttk.Treeview(self.left_frame, columns=self.columns_names, show='tree headings')
+        self.treeview_a.column("#0", width=50)
+        self.treeview_a.heading("#0", text="ID")
+
+        for col in self.columns_names:
+            self.treeview_a.column(col, width=100)
+            self.treeview_a.heading(col, text=col)
+
+        self.treeview_a.grid(row=0, column=0, sticky="nsew")
+        vsb = ttk.Scrollbar(self.left_frame, orient=tk.VERTICAL, command=self.treeview_a.yview)
+        hsb = ttk.Scrollbar(self.left_frame, orient=tk.HORIZONTAL, command=self.treeview_a.xview)
+        self.treeview_a.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        self.left_frame.rowconfigure(0, weight=1)
+        self.left_frame.columnconfigure(0, weight=1)
+
+        self.treeview_a.bind('<<TreeviewSelect>>', self.on_treeview_a_select)
+
+    def setup_treeview_b(self):
+        top_btns = ttk.Frame(self.right_frame)
+        top_btns.grid(row=0, column=0, sticky="ew")
+
+        ttk.Button(top_btns, text="Add Block", command=self.add_block).pack(side=tk.LEFT)
+        ttk.Button(top_btns, text="Delete Block", command=self.delete_block).pack(side=tk.LEFT, padx=5)
+
+        self.treeview_b = ttk.Treeview(self.right_frame, columns=("Block", "Address"), show='tree headings')
+        self.treeview_b.column("Block", width=120)
+        self.treeview_b.column("Address", width=80)
+        self.treeview_b.heading("Block", text="Block")
+        self.treeview_b.heading("Address", text="Address")
+        self.treeview_b.tag_configure("block_tag", background="yellow")
+        self.treeview_b.tag_configure("child_tag", background="white")
+
+        self.treeview_b.grid(row=1, column=0, sticky="nsew")
+        vsb = ttk.Scrollbar(self.right_frame, orient=tk.VERTICAL, command=self.treeview_b.yview)
+        hsb = ttk.Scrollbar(self.right_frame, orient=tk.HORIZONTAL, command=self.treeview_b.xview)
+        self.treeview_b.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        vsb.grid(row=1, column=1, sticky="ns")
+        hsb.grid(row=2, column=0, sticky="ew")
+        self.right_frame.columnconfigure(0, weight=1)
+        self.right_frame.rowconfigure(1, weight=1)
+
+        self.treeview_b.bind('<<TreeviewSelect>>', self.on_treeview_b_select)
+
+    def setup_arrows(self):
+        self.right_arrow_img = self.create_arrow_image("right")
+        self.left_arrow_img = self.create_arrow_image("left")
+
+        tk.Button(self.middle_frame, image=self.right_arrow_img, command=self.move_right).pack(pady=(100, 10))
+        tk.Button(self.middle_frame, image=self.left_arrow_img, command=self.move_left).pack(pady=10)
+
+    def create_arrow_image(self, direction):
+        img = Image.new('RGBA', (30, 20), (255, 255, 255, 0))
+        draw = ImageDraw.Draw(img)
+        if direction == "right":
+            draw.polygon([(5, 5), (25, 10), (5, 15)], fill="black")
         else:
-            self.update_pagination_display()
-
-    def create_toolbar(self):
-        """Create toolbar with Add button"""
-        toolbar = ttk.Frame(self.main_frame)
-        toolbar.pack(fill=tk.X, pady=(5, 10), padx=10)
-
-        # Add button
-        self.add_btn = ttk.Button(toolbar, text="Add Row", command=self.add_row)
-        self.add_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-        # Remove selected button
-        self.remove_btn = ttk.Button(toolbar, text="Remove Selected", command=self.remove_selected_rows)
-        self.remove_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-        # Clear all button
-        self.clear_btn = ttk.Button(toolbar, text="Clear All", command=self.clear_all_rows)
-        self.clear_btn.pack(side=tk.LEFT)
-
-    def create_scrollable_frame(self):
-        """Create scrollable frame for dynamic rows"""
-        # Create canvas and scrollbar
-        self.canvas = tk.Canvas(self.main_frame, bg='white')
-        self.scrollbar = ttk.Scrollbar(self.main_frame, orient="vertical", command=self.canvas.yview)
-
-        # Create frame inside canvas
-        self.scrollable_frame = ttk.Frame(self.canvas)
-
-        # Configure scrolling
-        self.scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        )
-
-        self.canvas_frame = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-
-        # Bind canvas resize to expand frame width
-        self.canvas.bind("<Configure>", self._on_canvas_configure)
-
-        # Pack canvas and scrollbar
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
-
-        # Bind mousewheel to canvas
-        self.canvas.bind("<MouseWheel>", self._on_mousewheel)
-
-        # Create header
-        self.create_header()
-
-    def create_header(self):
-        """Create header row"""
-        header_frame = ttk.Frame(self.scrollable_frame)
-        header_frame.pack(fill=tk.X, pady=(0, 5))
-
-        # Header labels with grid layout for better space utilization
-        header_frame.grid_columnconfigure(1, weight=1)  # Name column expands
-        header_frame.grid_columnconfigure(2, weight=1)  # Category column expands
-
-        ttk.Label(header_frame, text="Select").grid(row=0, column=0, padx=(5, 10), sticky="w")
-        ttk.Label(header_frame, text="Name").grid(row=0, column=1, padx=(0, 10), sticky="w")
-        ttk.Label(header_frame, text="Category").grid(row=0, column=2, padx=(0, 10), sticky="w")
-
-        # Add separator
-        separator = ttk.Separator(self.scrollable_frame, orient='horizontal')
-        separator.pack(fill=tk.X, pady=(0, 5))
-
-    def create_pagination_controls(self):
-        """Create pagination control bar"""
-        pagination_frame = ttk.Frame(self.main_frame)
-        pagination_frame.pack(fill=tk.X, pady=5, padx=10)
-
-        # Left side - Navigation buttons
-        nav_frame = ttk.Frame(pagination_frame)
-        nav_frame.pack(side=tk.LEFT)
-
-        # Previous x10 button - FIXED: removed the parentheses that were causing recursion
-        self.prev_x10_btn = ttk.Button(nav_frame, text="<<", width=4, command=self.prev_x10_pages)
-        self.prev_x10_btn.pack(side=tk.LEFT, padx=(0, 2))
-
-        # Previous button
-        self.prev_btn = ttk.Button(nav_frame, text="<", width=4, command=self.prev_page)
-        self.prev_btn.pack(side=tk.LEFT, padx=(0, 2))
-
-        # Next button
-        self.next_btn = ttk.Button(nav_frame, text=">", width=4, command=self.next_page)
-        self.next_btn.pack(side=tk.LEFT, padx=(0, 2))
-
-        # Next x10 button
-        self.next_x10_btn = ttk.Button(nav_frame, text=">>", width=4, command=self.next_x10_pages)
-        self.next_x10_btn.pack(side=tk.LEFT)
-
-        # Center - Page selection
-        page_frame = ttk.Frame(pagination_frame)
-        page_frame.pack(side=tk.LEFT, padx=20)
-
-        ttk.Label(page_frame, text="Page:").pack(side=tk.LEFT, padx=(0, 5))
-
-        # Current page combobox
-        self.page_var = tk.StringVar()
-        self.page_combo = ttk.Combobox(page_frame, textvariable=self.page_var, width=5, state="readonly")
-        self.page_combo.pack(side=tk.LEFT, padx=(0, 5))
-        self.page_combo.bind('<<ComboboxSelected>>', self.on_page_select)
-
-        # Total pages label
-        self.total_pages_label = ttk.Label(page_frame, text="of 1")
-        self.total_pages_label.pack(side=tk.LEFT, padx=(5, 0))
-
-        # Right side - Rows per page
-        rows_frame = ttk.Frame(pagination_frame)
-        rows_frame.pack(side=tk.RIGHT)
-
-        ttk.Label(rows_frame, text="Rows per page:").pack(side=tk.LEFT, padx=(0, 5))
-
-        self.rows_per_page_var = tk.StringVar(value=str(self.rows_per_page))
-        self.rows_per_page_combo = ttk.Combobox(
-            rows_frame,
-            textvariable=self.rows_per_page_var,
-            values=["5", "10", "20", "50", "100"],
-            width=5,
-            state="readonly"
-        )
-        self.rows_per_page_combo.pack(side=tk.LEFT)
-        self.rows_per_page_combo.bind('<<ComboboxSelected>>', self.on_rows_per_page_change)
-
-    def add_row(self, name=None, category=None, selected=False):
-        """Add a new row to the data (not directly to display)"""
-        self.row_counter += 1
-
-        # Use provided values or defaults
-        if name is None:
-            name = f"Item {self.row_counter}"
-        if category is None:
-            category = "Category A"
-
-        # Add to data storage
-        row_data = {
-            'name': name,
-            'category': category,
-            'selected': selected
-        }
-        self.all_data.append(row_data)
-
-        # Calculate which page the new row will be on
-        new_row_index = len(self.all_data) - 1
-        target_page = (new_row_index // self.rows_per_page) + 1
-
-        # Navigate to the page containing the new row
-        self.current_page = target_page
-
-        # Recalculate pagination and refresh display
-        self.calculate_pagination()
-        self.display_current_page()
-        self.update_pagination_controls()
-
-    def create_display_row(self, data, index):
-        """Create a display row widget from data"""
-        row_frame = ttk.Frame(self.scrollable_frame)
-        row_frame.pack(fill=tk.X, pady=2, padx=5)
-
-        # Configure grid columns to expand
-        row_frame.grid_columnconfigure(1, weight=1)  # Name column expands
-        row_frame.grid_columnconfigure(2, weight=1)  # Category column expands
-
-        # Create row components
-        row_widgets = {}
-
-        # Checkbutton
-        row_widgets['selected'] = tk.BooleanVar(value=data['selected'])
-        checkbutton = ttk.Checkbutton(row_frame, variable=row_widgets['selected'])
-        checkbutton.grid(row=0, column=0, padx=(0, 10), sticky="w")
-
-        # Name entry
-        row_widgets['name'] = tk.StringVar(value=data['name'])
-        name_entry = ttk.Entry(row_frame, textvariable=row_widgets['name'])
-        name_entry.grid(row=0, column=1, padx=(0, 10), sticky="ew")
-
-        # Combobox
-        row_widgets['category'] = tk.StringVar(value=data['category'])
-        category_combo = ttk.Combobox(
-            row_frame,
-            textvariable=row_widgets['category'],
-            values=["Category A", "Category B", "Category C", "Category D"],
-            state="readonly"
-        )
-        category_combo.grid(row=0, column=2, padx=(0, 10), sticky="ew")
-
-        # Store references
-        row_widgets['frame'] = row_frame
-        row_widgets['data_index'] = index  # Index in all_data
-
-        return row_widgets
-
-    def remove_selected_rows(self):
-        """Remove rows that are checked"""
-        # Sync displayed data back to all_data first
-        self.sync_displayed_to_data()
-
-        # Remove selected items from all_data
-        self.all_data = [item for item in self.all_data if not item['selected']]
-
-        # Update display
-        self.update_pagination_display()
-
-    def clear_all_rows(self):
-        """Remove all rows"""
-        self.all_data.clear()
-        for row_widget in self.displayed_rows:
-            row_widget['frame'].destroy()
-        self.displayed_rows.clear()
-        self.row_counter = 0
-        self.current_page = 1
-        self.update_pagination_display()
-
-    def sync_displayed_to_data(self):
-        """Sync changes from displayed rows back to all_data"""
-        for row_widget in self.displayed_rows:
-            data_index = row_widget['data_index']
-            if data_index < len(self.all_data):
-                self.all_data[data_index]['name'] = row_widget['name'].get()
-                self.all_data[data_index]['category'] = row_widget['category'].get()
-                self.all_data[data_index]['selected'] = row_widget['selected'].get()
-
-    def load_data(self, data):
-        """Load data from a list of dictionaries"""
-        # Clear existing rows first
-        self.clear_all_rows()
-
-        for item in data:
-            name = item.get('name', f'Item {self.row_counter + 1}')
-            category = item.get('category', 'Category A')
-            selected = item.get('selected', False)
-
-            self.add_row(name=name, category=category, selected=selected)
-
-    def get_all_data(self):
-        """Get data from all rows - FIXED: now syncs and returns all_data"""
-        # First sync any changes from displayed rows
-        self.sync_displayed_to_data()
-        # Return a copy of all data
-        return [row_data.copy() for row_data in self.all_data]
-
-    def _on_canvas_configure(self, event):
-        """Handle canvas resize to expand frame width"""
-        canvas_width = event.width
-        self.canvas.itemconfig(self.canvas_frame, width=canvas_width)
-
-    def _on_mousewheel(self, event):
-        """Handle mouse wheel scrolling"""
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-    def display_current_page(self):
-        """Display rows for the current page"""
-        # Clear existing displayed rows
-        for row_widget in self.displayed_rows:
-            row_widget['frame'].destroy()
-        self.displayed_rows.clear()
-
-        if not self.all_data:
-            return
-
-        # Calculate start and end indices
-        start_idx = (self.current_page - 1) * self.rows_per_page
-        end_idx = min(start_idx + self.rows_per_page, len(self.all_data))
-
-        # Create display rows for current page
-        for i in range(start_idx, end_idx):
-            row_widget = self.create_display_row(self.all_data[i], i)
-            self.displayed_rows.append(row_widget)
-
-        # Update scroll region
-        self.canvas.update_idletasks()
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-
-    def calculate_pagination(self):
-        """Calculate total pages based on data and rows per page"""
-        if not self.all_data:
-            self.total_pages = 1
-        else:
-            self.total_pages = (len(self.all_data) + self.rows_per_page - 1) // self.rows_per_page
-
-        # Ensure current page is valid
-        if self.current_page > self.total_pages:
-            self.current_page = max(1, self.total_pages)
-
-    def update_pagination_controls(self):
-        """Update pagination control states and values"""
-        # Update page combobox values
-        page_values = [str(i) for i in range(1, self.total_pages + 1)]
-        self.page_combo['values'] = page_values
-        self.page_var.set(str(self.current_page))
-
-        # Update total pages label
-        self.total_pages_label.config(text=f"of {self.total_pages}")
-
-        # Update button states
-        self.prev_btn.config(state="normal" if self.current_page > 1 else "disabled")
-        self.prev_x10_btn.config(state="normal" if self.current_page > 10 else "disabled")
-        self.next_btn.config(state="normal" if self.current_page < self.total_pages else "disabled")
-        self.next_x10_btn.config(state="normal" if self.current_page <= self.total_pages - 10 else "disabled")
-
-    def update_pagination_display(self):
-        """Update the entire pagination display"""
-        self.calculate_pagination()
-        self.display_current_page()
-        self.update_pagination_controls()
-
-    # Pagination navigation methods
-    def prev_page(self):
-        if self.current_page > 1:
-            # Sync current page data before changing
-            self.sync_displayed_to_data()
-            self.current_page -= 1
-            self.update_pagination_display()
-
-    def next_page(self):
-        if self.current_page < self.total_pages:
-            # Sync current page data before changing
-            self.sync_displayed_to_data()
-            self.current_page += 1
-            self.update_pagination_display()
-
-    def prev_x10_pages(self):
-        # Sync current page data before changing
-        self.sync_displayed_to_data()
-        self.current_page = max(1, self.current_page - 10)
-        self.update_pagination_display()
-
-    def next_x10_pages(self):
-        # Sync current page data before changing
-        self.sync_displayed_to_data()
-        self.current_page = min(self.total_pages, self.current_page + 10)
-        self.update_pagination_display()
-
-    def on_page_select(self, event=None):
+            draw.polygon([(25, 5), (5, 10), (25, 15)], fill="black")
+        return ImageTk.PhotoImage(img)
+
+    def populate_treeview_a(self):
+        self.treeview_a.tag_configure("skyblue", background="lightblue")
+        self.treeview_a.tag_configure("white", background="white")
+        self.treeview_a.tag_configure("orange", background="orange")
+        self.treeview_a.tag_configure("gray", background="gray")
+
+        for i, obj in enumerate(self.model_objects):
+            values = [self.get_attr(obj, attr) for attr in self.attributs_names_list]
+            values = [str(v) if v is not None else "" for v in values]
+            item_id = self.treeview_a.insert("", tk.END, text=str(i + 1), values=values, tags=["skyblue"])
+            self.assignments[item_id] = {}
+            self.item_colors[item_id] = "skyblue"
+
+    def get_attr(self, obj, attr):
         try:
-            new_page = int(self.page_var.get())
-            if 1 <= new_page <= self.total_pages:
-                # Sync current page data before changing
-                self.sync_displayed_to_data()
-                self.current_page = new_page
-                self.update_pagination_display()
-        except ValueError:
-            pass
+            for part in attr.split('.'):
+                obj = getattr(obj, part)
+            return obj
+        except AttributeError:
+            return None
 
-    def on_rows_per_page_change(self, event=None):
-        try:
-            new_rows_per_page = int(self.rows_per_page_var.get())
-            # Sync current page data before changing
-            self.sync_displayed_to_data()
-            self.rows_per_page = new_rows_per_page
-            self.current_page = 1  # Reset to first page
-            self.update_pagination_display()
-        except ValueError:
-            pass
+    def add_block(self):
+        block_name = f"Block_{self.next_block_number}"
+        address = str(self.next_address)
+        block_id = self.treeview_b.insert("", tk.END, values=(block_name, address), tags=["block_tag"])
+        self.next_block_number += 1
+        self.next_address += 1
+        return block_id
+
+    def delete_block(self):
+        if self.selected_b_item and not self.treeview_b.parent(self.selected_b_item):
+            for child in self.treeview_b.get_children(self.selected_b_item):
+                vals = self.treeview_b.item(child)['values']
+                if vals:
+                    num = vals[0].split("_")[1]
+                    for item in self.treeview_a.get_children():
+                        if self.treeview_a.item(item)["text"] == num:
+                            if self.selected_b_item in self.assignments[item]:
+                                del self.assignments[item][self.selected_b_item]
+                                self.update_item_color(item)
+            self.treeview_b.delete(self.selected_b_item)
+            self.selected_b_item = None
+
+    def on_treeview_a_select(self, _): self.selected_a_item = self.treeview_a.selection()[0] if self.treeview_a.selection() else None
+    def on_treeview_b_select(self, _): self.selected_b_item = self.treeview_b.selection()[0] if self.treeview_b.selection() else None
+
+    def move_right(self):
+        if not self.selected_a_item or not self.selected_b_item: return
+        if self.treeview_b.parent(self.selected_b_item): return
+
+        if self.selected_b_item not in self.assignments[self.selected_a_item]:
+            self.assignments[self.selected_a_item][self.selected_b_item] = 0
+        self.assignments[self.selected_a_item][self.selected_b_item] += 1
+
+        text = self.treeview_a.item(self.selected_a_item)['text']
+        values = self.treeview_a.item(self.selected_a_item)['values']
+        child_values = [f"Item_{text}"] + list(values[:1])
+        self.treeview_b.insert(self.selected_b_item, tk.END, values=child_values, tags=["child_tag"])
+        self.update_item_color(self.selected_a_item)
+
+    def move_left(self):
+        if not self.selected_b_item: return
+        parent = self.treeview_b.parent(self.selected_b_item)
+        if not parent: return
+
+        vals = self.treeview_b.item(self.selected_b_item)['values']
+        if vals and vals[0].startswith("Item_"):
+            item_num = vals[0].split("_")[1]
+            for item in self.treeview_a.get_children():
+                if self.treeview_a.item(item)['text'] == item_num:
+                    if parent in self.assignments[item]:
+                        self.assignments[item][parent] -= 1
+                        if self.assignments[item][parent] <= 0:
+                            del self.assignments[item][parent]
+                        self.update_item_color(item)
+                        self.treeview_b.delete(self.selected_b_item)
+                        self.selected_b_item = None
+                    break
+
+    def update_item_color(self, item_id):
+        total = sum(self.assignments[item_id].values())
+        color_map = {0: "skyblue", 1: "white", 2: "orange"}
+        tag = color_map.get(total, "gray")
+
+        self.treeview_a.item(item_id, tags=[tag])
+        self.item_colors[item_id] = tag
 
 
-# Example usage
-if __name__ == "__main__":
+# Démo
+class ExampleModel:
+    def __init__(self, name, value, category):
+        self.name = name
+        self.value = value
+        self.category = category
+        self.details = type('Details', (), {'code': f"{name[:2].upper()}{value}"})()
+
+
+def demo():
     root = tk.Tk()
+    root.geometry("1000x600")
+    root.title("Dual TreeView Widget Demo")
 
-    # Example initial data
-    sample_data = [
-        {'name': 'Task 1', 'category': 'Category B', 'selected': True},
-        {'name': 'Task 2', 'category': 'Category A', 'selected': False},
-        {'name': 'Task 3', 'category': 'Category C', 'selected': False},
+    model_objects = [
+        ExampleModel("Product A", 100, "Electronics"),
+        ExampleModel("Product B", 200, "Electronics"),
+        ExampleModel("Service X", 150, "Services"),
+        ExampleModel("Service Y", 75, "Services"),
+        ExampleModel("Item Z", 300, "Misc")
     ]
 
-    # Create widget with initial data
-    widget = DynamicRowWidget(root, initial_data=sample_data)
-
-    # Add some example functionality to demonstrate data retrieval
-    def print_data():
-        data = widget.get_all_data()
-        print("Current data:")
-        for i, row in enumerate(data):
-            print(f"Row {i + 1}: {row}")
-
-    def load_new_data():
-        new_data = [
-            {'name': 'New Item 1', 'category': 'Category D', 'selected': False},
-            {'name': 'New Item 2', 'category': 'Category B', 'selected': True},
-        ]
-        widget.load_data(new_data)
-
-    # Add buttons to demonstrate functionality
-    demo_frame = ttk.Frame(root)
-    demo_frame.pack(fill=tk.X, padx=10, pady=5)
-
-    ttk.Button(demo_frame, text="Print All Data", command=print_data).pack(side=tk.LEFT, padx=(0, 5))
-    ttk.Button(demo_frame, text="Load New Data", command=load_new_data).pack(side=tk.LEFT)
+    DualTreeViewWidget(
+        parent=root,
+        columns_names=["Name", "Value", "Category", "Code"],
+        attributs_names_list=["name", "value", "category", "details.code"],
+        model_objects=model_objects
+    )
 
     root.mainloop()
+
+
+if __name__ == "__main__":
+    demo()
